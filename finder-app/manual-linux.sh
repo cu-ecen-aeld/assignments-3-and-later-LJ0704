@@ -2,6 +2,10 @@
 # Script outline to install and build kernel.
 # Author: Siddhant Jajoo.
 
+##################################################
+#Chatgpt:
+#https://chatgpt.com/share/697ed59e-d740-800e-ae79-07ad664c96e0
+##################################################
 set -e
 set -u
 
