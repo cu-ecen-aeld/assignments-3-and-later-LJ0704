@@ -1,10 +1,10 @@
 #Reference: https://makefiletutorial.com/
 
-#Setting Compiler to Cross compiler
-CC := $(CROSS_COMPILE)gcc
+#Setting Compiler to Cross compiler enabling debug symbols
+CC := $(CROSS_COMPILE)gcc -g
 
-#Compiler Flags
-CFLAGS := -Wall -Wextra -O2
+#Compiler Flags Remove any optimization to enable single stepping
+CFLAGS := -Wall -Wextra -O0 
 
 TARGET = aesdsocket
 
