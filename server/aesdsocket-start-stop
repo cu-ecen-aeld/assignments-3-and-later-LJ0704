@@ -1,0 +1,19 @@
+#! /bin/sh
+
+case "$1" in
+  start)
+    echo "Starting simpleserver"
+    start-stop-daemon -S -n simpleserver -a /usr/bin/simpleserver
+    ;;
+  stop)
+    echo "Stopping simpleserver"
+    start-stop-daemon -K -n simpleserver
+    ;;
+  *)
+    echo "Usage: $0 {start|stop}"
+  exit 1
+esac
+
+exit 0
+
+#Reference: Lecture on Canvas:https://www.coursera.org/learn/linux-system-programming-introduction-to-buildroot/lecture/EJdLo/linux-system-initialization
