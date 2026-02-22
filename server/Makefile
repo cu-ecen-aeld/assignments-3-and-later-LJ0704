@@ -4,7 +4,7 @@
 CC ?= $(CROSS_COMPILE)gcc
 #Compiler Flags Remove any optimization to enable single stepping
 CFLAGS := -Wall -Wextra -O0 -pthread
-LDFLAGS := -pthread -lrt
+LDFLAGS += -pthread -lrt -Wl,--hash-style=gnu
 
 TARGET = aesdsocket
 
