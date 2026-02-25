@@ -1,10 +1,10 @@
 #Reference: https://makefiletutorial.com/
 
 #Setting Compiler to Cross compiler enabling debug symbols
-CC := $(CROSS_COMPILE)gcc -g
-
+CC ?= $(CROSS_COMPILE)gcc
 #Compiler Flags Remove any optimization to enable single stepping
-CFLAGS := -Wall -Wextra -O0 
+CFLAGS := -Wall -Wextra -O0 -pthread
+LDFLAGS += -pthread -lrt -Wl,--hash-style=gnu
 
 TARGET = aesdsocket
 
@@ -15,7 +15,7 @@ OBJS = $(SRCS:.c=.o)
 all: $(TARGET)
 
 $(TARGET): $(OBJS)
-	$(CC) $(CFLAGS) -o $@ $^
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
 # Compile .c to .o
 %.o: %.c
@@ -23,6 +23,6 @@ $(TARGET): $(OBJS)
 	
 # Clean target
 clean:
-	rm -f $(TARGET) $(OBJS)
+	rm -f $(TARGET) $(OBJS) /var/tmp/aesdsocketdata
 
 .PHONY: all clean
