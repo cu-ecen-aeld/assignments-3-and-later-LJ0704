@@ -51,7 +51,7 @@ int aesd_release(struct inode *inode, struct file *filp)
 }
 
 ssize_t aesd_read(struct file *filp, char __user *buf, size_t count,
-                loff_t *f_pos)
+                  loff_t *f_pos)
 {
     struct aesd_dev *dev = filp->private_data;
     ssize_t retval = 0;
@@ -72,9 +72,7 @@ ssize_t aesd_read(struct file *filp, char __user *buf, size_t count,
 
         size_t bytes_to_copy = min(count, entry->size - entry_offset);
 
-        if (copy_to_user(buf + retval,
-                         entry->buffptr + entry_offset,
-                         bytes_to_copy)) {
+        if (copy_to_user(buf + retval, entry->buffptr + entry_offset, bytes_to_copy)) {
             retval = -EFAULT;
             break;
         }
@@ -87,7 +85,6 @@ ssize_t aesd_read(struct file *filp, char __user *buf, size_t count,
     mutex_unlock(&dev->lock);
     return retval;
 }
-
 ssize_t aesd_write(struct file *filp, const char __user *buf,size_t count, loff_t *f_pos)
 {
     struct aesd_dev *dev = filp->private_data;
