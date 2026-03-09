@@ -107,10 +107,10 @@ out:
 ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count, loff_t *f_pos)
 {
     ssize_t retval = -ENOMEM;
-    struct aesd_dev *dev;
+    struct aesd_dev *dev = filp->private_data;
     char *new_buf;
+    size_t i;
 
-    dev = filp->private_data;
     if (!dev || !buf)
         return -EFAULT;
 
@@ -125,7 +125,8 @@ ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count, loff
 
     dev->partial_entry.buffptr = new_buf;
 
-    if (copy_from_user(dev->partial_entry.buffptr + dev->partial_entry.size, buf, count)) {
+    if (copy_from_user(dev->partial_entry.buffptr + dev->partial_entry.size,
+                       buf, count)) {
         retval = -EFAULT;
         goto out;
     }
@@ -133,30 +134,45 @@ ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count, loff
     dev->partial_entry.size += count;
     retval = count;
 
-    /* If newline is found, push to circular buffer */
-    if (memchr(dev->partial_entry.buffptr, '\n', dev->partial_entry.size)) {
-        /* Free oldest entry if buffer is full */
-        if (dev->circular_buffer.full) {
-            if (dev->circular_buffer.entry[dev->circular_buffer.out_offs].buffptr) {
-                kfree(dev->circular_buffer.entry[dev->circular_buffer.out_offs].buffptr);
-                dev->circular_buffer.entry[dev->circular_buffer.out_offs].buffptr = NULL;
-                dev->circular_buffer.entry[dev->circular_buffer.out_offs].size = 0;
-            }
+    /* Process complete lines */
+    char *line_start = dev->partial_entry.buffptr;
+    char *newline_ptr;
+    while ((newline_ptr = memchr(line_start, '\n',
+                                 dev->partial_entry.buffptr + dev->partial_entry.size - line_start))) {
+
+        size_t line_len = newline_ptr - line_start + 1; /* include \n */
+
+        /* Create a temporary entry */
+        struct aesd_buffer_entry entry = {
+            .buffptr = kmalloc(line_len, GFP_KERNEL),
+            .size = line_len
+        };
+        if (!entry.buffptr) {
+            retval = -ENOMEM;
+            goto out;
         }
 
-        /* Add new entry */
-        aesd_circular_buffer_add_entry(&dev->circular_buffer, &dev->partial_entry);
+        memcpy(entry.buffptr, line_start, line_len);
 
-        /* Reset partial entry */
-        dev->partial_entry.buffptr = NULL;
-        dev->partial_entry.size = 0;
+        /* Add to circular buffer */
+        aesd_circular_buffer_add_entry(&dev->circular_buffer, &entry);
+
+        /* Free overwritten oldest entry if needed handled inside add_entry */
+
+        line_start = newline_ptr + 1;
     }
+
+    /* Any leftover bytes after the last newline stay in partial_entry */
+    size_t leftover = dev->partial_entry.buffptr + dev->partial_entry.size - line_start;
+    if (leftover > 0) {
+        memmove(dev->partial_entry.buffptr, line_start, leftover);
+    }
+    dev->partial_entry.size = leftover;
 
 out:
     mutex_unlock(&dev->lock);
     return retval;
 }
-
 /* Setup character device */
 static int aesd_setup_cdev(struct aesd_dev *dev)
 {
