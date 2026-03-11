@@ -30,9 +30,20 @@
 #endif
 
 #define PORT 9000
-#define DATA_FILE "/var/tmp/aesdsocketdata"
+//#define DATA_FILE "/var/tmp/aesdsocketdata"
 #define BACKLOG 10
 #define BUF_SIZE 1024
+
+#ifndef USE_AESD_CHAR_DEVICE
+#define USE_AESD_CHAR_DEVICE 1
+#endif
+
+
+#ifdef USE_AESD_CHAR_DEVICE
+#define DATA_FILE "/dev/aesdchar"
+#else
+#define DATA_FILE "/var/tmp/aesdsocketdata"
+#endif
 
 static volatile sig_atomic_t stop = 0;
 static int global_sockfd = -1;
@@ -215,7 +226,12 @@ int main(int argc, char *argv[]) {
 		return -1;
 	}
     pthread_t time_thread;
-    pthread_create(&time_thread, NULL, timestamp_handler, NULL);
+    int timestamp_thread_created = 0;
+
+    #ifndef USE_AESD_CHAR_DEVICE
+       pthread_create(&time_thread, NULL, timestamp_handler, NULL);
+       timestamp_thread_created = 1;
+    #endif
 
     while (!stop) {
         struct sockaddr_in client_addr;
@@ -228,6 +244,10 @@ int main(int argc, char *argv[]) {
         }
 
         struct thread_info_s *new_t = calloc(1, sizeof(struct thread_info_s));
+        if (!new_t) {
+           close(client_fd);
+           continue;
+       }
         new_t->client_fd = client_fd;
         new_t->client_addr = client_addr;
 
@@ -248,7 +268,10 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    pthread_join(time_thread, NULL);
+    if (!USE_AESD_CHAR_DEVICE && timestamp_thread_created)
+    {   
+        pthread_join(time_thread, NULL);
+    }
     struct thread_info_s *it, *tmp;
     SLIST_FOREACH_SAFE(it, &head, entries, tmp) {
         pthread_join(it->thread_id, NULL);
@@ -258,7 +281,9 @@ int main(int argc, char *argv[]) {
 
     pthread_mutex_destroy(&file_mutex);
     if (global_sockfd != -1) close(global_sockfd);
-    remove(DATA_FILE);
+    #ifndef USE_AESD_CHAR_DEVICE
+         remove(DATA_FILE);
+    #endif
     closelog();
 
     return 0;
