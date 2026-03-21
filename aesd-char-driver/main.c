@@ -38,6 +38,9 @@ int aesd_open(struct inode *inode, struct file *filp);
 int aesd_release(struct inode *inode, struct file *filp);
 ssize_t aesd_read(struct file *filp, char __user *buf, size_t count, loff_t *f_pos);
 ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count, loff_t *f_pos);
+loff_t  aesd_llseek(struct file *filp, loff_t offset, int whence);
+long    aesd_ioctl(struct file *filp, unsigned int cmd, unsigned long arg);
+
 
 /* File operations structure */
 struct file_operations aesd_fops = {
@@ -45,7 +48,9 @@ struct file_operations aesd_fops = {
     .read = aesd_read,
     .write = aesd_write,
     .open = aesd_open,
-    .release = aesd_release
+    .release = aesd_release,
+    .llseek = aesd_llseek, //Adding LLseek to file operations
+    .unlocked_ioctl = aesd_ioctl
 };
 
 /* Open function */
@@ -109,7 +114,10 @@ ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count, loff
     ssize_t retval = -ENOMEM;
     struct aesd_dev *dev = filp->private_data;
     char *new_buf;
+    char *newline_ptr;
+    char *line_start;    
     size_t i;
+    size_t leftover;
 
     if (!dev || !buf)
         return -EFAULT;
@@ -135,8 +143,8 @@ ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count, loff
     retval = count;
 
     /* Process complete lines */
-    char *line_start = dev->partial_entry.buffptr;
-    char *newline_ptr;
+    line_start = dev->partial_entry.buffptr;
+    
     while ((newline_ptr = memchr(line_start, '\n',
                                  dev->partial_entry.buffptr + dev->partial_entry.size - line_start))) {
 
@@ -152,9 +160,14 @@ ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count, loff
             goto out;
         }
 
-        memcpy(entry.buffptr, line_start, line_len);
+        memcpy((void *)entry.buffptr, line_start, line_len);
 
-        /* Add to circular buffer */
+        /* If the buffer is full, free the entry that will be overwritten */
+        if (dev->circular_buffer.full) {
+            const char *old = dev->circular_buffer.entry[dev->circular_buffer.out_offs].buffptr;
+            if (old)
+                kfree(old);
+        }
         aesd_circular_buffer_add_entry(&dev->circular_buffer, &entry);
 
         /* Free overwritten oldest entry if needed handled inside add_entry */
@@ -163,7 +176,7 @@ ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count, loff
     }
 
     /* Any leftover bytes after the last newline stay in partial_entry */
-    size_t leftover = dev->partial_entry.buffptr + dev->partial_entry.size - line_start;
+    leftover = dev->partial_entry.buffptr + dev->partial_entry.size - line_start;
     if (leftover > 0) {
         memmove(dev->partial_entry.buffptr, line_start, leftover);
     }
@@ -173,7 +186,109 @@ out:
     mutex_unlock(&dev->lock);
     return retval;
 }
-/* Setup character device */
+
+/* 
+Function name : aesd_llseek 
+Description :used reposition the file offset
+	     Supports SEEK_SET, SEEK_CUR, and SEEK_END and updates the file position accordingly
+*/
+
+loff_t aesd_llseek(struct file *flip, loff_t offset, int whence_
+{
+	struct aesd_dev *dev = filp->private_data;
+	loff_t new_pos;
+	
+	if(!dev)
+	{
+		return -EFAULT;
+	}
+	
+	if(mutex_lock_interruptible(&dev->lock))
+	{
+		return -ERESTARTSYS;
+	}
+	
+	loff_t total_size = (loff_t)aesd_circular_buffer_total_size(&dev->circular_buffer);
+	
+	
+    switch (whence) {
+    case SEEK_SET:
+        new_pos = offset;
+        break;
+    case SEEK_CUR:
+        new_pos = filp->f_pos + offset;
+        break;
+    case SEEK_END:
+        new_pos = total_size + offset;
+        break;
+    default:
+        mutex_unlock(&dev->lock);
+        return -EINVAL;
+    }
+
+    if (new_pos < 0 || new_pos > total_size) {
+        mutex_unlock(&dev->lock);
+        return -EINVAL;
+    }
+
+    filp->f_pos = new_pos;
+    mutex_unlock(&dev->lock);
+    return new_pos;
+}
+
+
+/* 
+Function name : aesd_ioctl
+Description:  
+*/
+long aesd_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
+{
+    struct aesd_dev *dev = filp->private_data;
+    struct aesd_seekto seekto;
+    loff_t new_pos;
+
+    /* Validate magic number and command number */
+    if (_IOC_TYPE(cmd) != AESD_IOC_MAGIC)
+    {
+        return -ENOTTY;
+    }
+    if (_IOC_NR(cmd) > AESDCHAR_IOC_MAXNR)
+    {
+        return -ENOTTY;
+    }
+
+    switch (cmd) {
+    case AESDCHAR_IOCSEEKTO:
+        /* Copy the aesd_seekto struct from user space */
+        if (copy_from_user(&seekto, (const void __user *)arg, sizeof(seekto)))
+        {
+            return -EFAULT;
+	}
+        if (mutex_lock_interruptible(&dev->lock))
+        { 
+            return -ERESTARTSYS;
+	}
+        /*
+         * Translate (write_cmd, write_cmd_offset) → absolute fpos.
+         * Returns -1 when either value is out of range.
+         */
+        new_pos = aesd_circular_buffer_fpos_from_cmd(&dev->circular_buffer, seekto.write_cmd, seekto.write_cmd_offset);
+        
+        mutex_unlock(&dev->lock);
+
+        if (new_pos < 0)
+        {
+            return -EINVAL;
+	}
+        filp->f_pos = new_pos;
+        return 0;
+
+    default:
+        return -ENOTTY;
+    }
+}
+
+/* Setup character device */ 
 static int aesd_setup_cdev(struct aesd_dev *dev)
 {
     int err;
