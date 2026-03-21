@@ -19,9 +19,11 @@
 #include <linux/types.h>
 #include <linux/cdev.h>
 #include <linux/fs.h>
-#include <linux/uaccess.h>   // copy_to_user, copy_from_user
+#include <linux/uaccess.h>   
+#include <linux/compat.h>
 
 #include "aesdchar.h"
+#include "aesd_ioctl.h"
 
 /* Dynamic major number allocation */
 int aesd_major = 0;
@@ -50,7 +52,8 @@ struct file_operations aesd_fops = {
     .open = aesd_open,
     .release = aesd_release,
     .llseek = aesd_llseek, //Adding LLseek to file operations
-    .unlocked_ioctl = aesd_ioctl
+    .unlocked_ioctl = aesd_ioctl,
+    .compat_ioctl   = compat_ptr_ioctl,
 };
 
 /* Open function */
@@ -145,8 +148,8 @@ ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count, loff
     /* Process complete lines */
     line_start = dev->partial_entry.buffptr;
     
-    while ((newline_ptr = memchr(line_start, '\n',
-                                 dev->partial_entry.buffptr + dev->partial_entry.size - line_start))) {
+    while (((newline_ptr = memchr(line_start, '\n',
+                                 dev->partial_entry.buffptr + dev->partial_entry.size - line_start)))s != NULL) {
 
         size_t line_len = newline_ptr - line_start + 1; /* include \n */
 
@@ -211,7 +214,7 @@ loff_t aesd_llseek(struct file *flip, loff_t offset, int whence_
 	loff_t total_size = (loff_t)aesd_circular_buffer_total_size(&dev->circular_buffer);
 	
 	
-    switch (whence) {
+ /*   switch (whence) {
     case SEEK_SET:
         new_pos = offset;
         break;
@@ -233,7 +236,16 @@ loff_t aesd_llseek(struct file *flip, loff_t offset, int whence_
 
     filp->f_pos = new_pos;
     mutex_unlock(&dev->lock);
-    return new_pos;
+    return new_pos;*/
+        mutex_unlock(&dev->lock);
+
+    /*
+     * fixed_size_llseek() handles SEEK_SET / SEEK_CUR / SEEK_END,
+     * bounds-checks the result (0 … size), and updates filp->f_pos
+     * under the inode lock — preventing races between concurrent
+     * llseek and read calls on the same file descriptor.
+     */
+    return fixed_size_llseek(filp, offset, whence, total_size);
 }
 
 
@@ -245,7 +257,7 @@ long aesd_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 {
     struct aesd_dev *dev = filp->private_data;
     struct aesd_seekto seekto;
-    loff_t new_pos;
+    ssize_t new_pos;
 
     /* Validate magic number and command number */
     if (_IOC_TYPE(cmd) != AESD_IOC_MAGIC)
@@ -280,7 +292,7 @@ long aesd_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
         {
             return -EINVAL;
 	}
-        filp->f_pos = new_pos;
+        filp->f_pos = (loff_t)new_pos;
         return 0;
 
     default:

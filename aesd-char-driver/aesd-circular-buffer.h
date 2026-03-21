@@ -14,6 +14,7 @@
 #include <stddef.h> // size_t
 #include <stdint.h> // uintx_t
 #include <stdbool.h>
+#include <sys/types.h>
 #endif
 
 #define AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED 10
@@ -58,6 +59,9 @@ extern void aesd_circular_buffer_add_entry(struct aesd_circular_buffer *buffer, 
 
 extern void aesd_circular_buffer_init(struct aesd_circular_buffer *buffer);
 
+size_t aesd_circular_buffer_total_size(struct aesd_circular_buffer *buffer);
+
+ssize_t aesd_circular_buffer_fpos_from_cmd(struct aesd_circular_buffer *buffer, uint32_t write_cmd, uint32_t write_cmd_offset);
 /**
  * Create a for loop to iterate over each member of the circular buffer.
  * Useful when you've allocated memory for circular buffer entries and need to free it
@@ -72,11 +76,29 @@ extern void aesd_circular_buffer_init(struct aesd_circular_buffer *buffer);
  *      free(entry->buffptr);
  * }
  */
+ /*
 #define AESD_CIRCULAR_BUFFER_FOREACH(entryptr,buffer,index) \
     for(index=0, entryptr=&((buffer)->entry[index]); \
             index<AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED; \
             index++, entryptr=&((buffer)->entry[index]))
-
-
+*/
+/**
+ * Iterate over every valid entry in the circular buffer.
+ * entryptr  – struct aesd_buffer_entry *  (loop variable)
+ * buffer    – struct aesd_circular_buffer *
+ * index     – uint8_t (loop variable, holds current slot index)
+ */
+/*#define AESD_CIRCULAR_BUFFER_FOREACH(entryptr, buffer, index)           \
+    for (index = ((buffer)->full ? (buffer)->out_offs : 0),             \
+         entryptr = &(buffer)->entry[index];                            \
+         entryptr < &(buffer)->entry[AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED]; \
+         index = (index + 1) % AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED, \
+         entryptr = &(buffer)->entry[index])*/
+#define AESD_CIRCULAR_BUFFER_FOREACH(entryptr, buffer, index)        \
+    for ((index) = 0,                                                \
+         (entryptr) = &(buffer)->entry[0];                           \
+         (index) < AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED;          \
+         (index)++,                                                  \
+         (entryptr) = &(buffer)->entry[(index)])
 
 #endif /* AESD_CIRCULAR_BUFFER_H */

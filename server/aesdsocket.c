@@ -14,6 +14,8 @@
 #include <sys/stat.h>  // Added for umask
 #include <errno.h>
 #include <time.h>
+#include <sys/ioctl.h>
+
 
 
 //References: Steps for socket is follwed as per the coursera lecture 
@@ -30,6 +32,8 @@
 #endif
 
 #define PORT 9000
+#define SEEKTO_CMD "AESDCHAR_IOCSEEKTO:"
+
 //#define DATA_FILE "/var/tmp/aesdsocketdata"
 #define BACKLOG 10
 #define BUF_SIZE 1024
@@ -41,6 +45,7 @@
 
 #ifdef USE_AESD_CHAR_DEVICE
 #define DATA_FILE "/dev/aesdchar"
+#include "../aesd-char-driver/aesd_ioctl.h"
 #else
 #define DATA_FILE "/var/tmp/aesdsocketdata"
 #endif
@@ -145,26 +150,103 @@ void* thread_handler(void* thread_param) {
         memcpy(packet + total_received, rx_buf, bytes);
         total_received += bytes;
 
-        if (memchr(packet, '\n', total_received) != NULL) {
-            pthread_mutex_lock(&file_mutex);
+        /* Only act once we have a complete newline-terminated line */
+        if (memchr(packet, '\n', total_received) == NULL)
+            continue;
+
+        pthread_mutex_lock(&file_mutex);
+
+#ifdef USE_AESD_CHAR_DEVICE
+        /*
+         * AESDCHAR_IOCSEEKTO:X,Y path
+         * -------------------------------------------------------
+         * When the received line matches the seek prefix:
+         *   1. Parse X (write_cmd) and Y (write_cmd_offset).
+         *   2. Open /dev/aesdchar with O_RDWR.
+         *   3. Issue AESDCHAR_IOCSEEKTO ioctl — this sets the file
+         *      offset on the SAME fd we will read from, so the
+         *      kernel-side f_pos is honoured.
+         *   4. Do NOT write the command string to the device.
+         *   5. Read from the resulting position and send to client.
+         */
+        if (strncmp(packet, SEEKTO_CMD, strlen(SEEKTO_CMD)) == 0) {
+
+            const char *params = packet + strlen(SEEKTO_CMD);
+            unsigned int x = 0, y = 0;
+
+            if (sscanf(params, "%u,%u", &x, &y) != 2) {
+                syslog(LOG_ERR, "Malformed AESDCHAR_IOCSEEKTO params");
+                pthread_mutex_unlock(&file_mutex);
+                goto next_packet;
+            }
+
+            /* Open the device — O_RDWR required for both ioctl and read */
+            int fd = open(DATA_FILE, O_RDWR);
+            if (fd == -1) {
+                syslog(LOG_ERR, "open %s : %s", DATA_FILE, strerror(errno));
+                pthread_mutex_unlock(&file_mutex);
+                goto next_packet;
+            }
+
+            struct aesd_seekto seekto = {
+                .write_cmd        = (uint32_t)x,
+                .write_cmd_offset = (uint32_t)y,
+            };
+
+            if (ioctl(fd, AESDCHAR_IOCSEEKTO, &seekto) < 0) {
+                syslog(LOG_ERR, "ioctl AESDCHAR_IOCSEEKTO : %s",
+                       strerror(errno));
+                close(fd);
+                pthread_mutex_unlock(&file_mutex);
+                goto next_packet;
+            }
+
+            /* Read from the seeked position and send back to client */
+            ssize_t r;
+            while ((r = read(fd, rx_buf, sizeof(rx_buf))) > 0)
+                send(data->client_fd, rx_buf, r, 0);
+
+            close(fd);
+
+        } else {
+            /*
+             * Normal write path (USE_AESD_CHAR_DEVICE, non-seek line)
+             * -------------------------------------------------------
+             * Write the received data, then seek to 0 and echo the
+             * full device contents back to the client.
+             */
             int fd = open(DATA_FILE, O_CREAT | O_RDWR | O_APPEND, 0644);
             if (fd != -1) {
                 write(fd, packet, total_received);
                 lseek(fd, 0, SEEK_SET);
                 ssize_t r;
-                while ((r = read(fd, rx_buf, sizeof(rx_buf))) > 0) {
+                while ((r = read(fd, rx_buf, sizeof(rx_buf))) > 0)
                     send(data->client_fd, rx_buf, r, 0);
-                }
                 close(fd);
             }
-            pthread_mutex_unlock(&file_mutex);
-
-            free(packet);
-            packet = NULL;
-            total_received = 0;
         }
-    }
 
+#else   /* !USE_AESD_CHAR_DEVICE — original file-backed behaviour unchanged */
+        {
+            int fd = open(DATA_FILE, O_CREAT | O_RDWR | O_APPEND, 0644);
+            if (fd != -1) {
+                write(fd, packet, total_received);
+                lseek(fd, 0, SEEK_SET);
+                ssize_t r;
+                while ((r = read(fd, rx_buf, sizeof(rx_buf))) > 0)
+                    send(data->client_fd, rx_buf, r, 0);
+                close(fd);
+            }
+        }
+#endif  /* USE_AESD_CHAR_DEVICE */
+
+        pthread_mutex_unlock(&file_mutex);
+
+next_packet:
+        free(packet);
+        packet = NULL;
+        total_received = 0;
+    }
     if (packet) free(packet);
     close(data->client_fd);
     data->thread_complete = 1;
