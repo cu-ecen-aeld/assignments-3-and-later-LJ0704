@@ -114,14 +114,17 @@ out:
 /* Write function */
 ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count, loff_t *f_pos)
 {
-    ssize_t retval = -ENOMEM;
-    struct aesd_dev *dev = filp->private_data;
+    ssize_t retval;
+    struct aesd_dev *dev;
     char *new_buf;
     char *newline_ptr;
-    char *line_start;    
-    size_t i;
+    char *line_start;
     size_t leftover;
-
+    size_t line_len;
+    struct aesd_buffer_entry entry;
+    const char *old;
+    retval = -ENOMEM;
+    dev = filp->private_data;   
     if (!dev || !buf)
         return -EFAULT;
 
@@ -134,9 +137,9 @@ ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count, loff
     if (!new_buf)
         goto out;
 
-    dev->partial_entry.buffptr = new_buf;
+    dev->partial_entry.buffptr =  (const char *)new_buf;
 
-    if (copy_from_user(dev->partial_entry.buffptr + dev->partial_entry.size,
+    if (copy_from_user((char *)dev->partial_entry.buffptr + dev->partial_entry.size,
                        buf, count)) {
         retval = -EFAULT;
         goto out;
@@ -146,18 +149,18 @@ ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count, loff
     retval = count;
 
     /* Process complete lines */
-    line_start = dev->partial_entry.buffptr;
+    line_start = (char *)dev->partial_entry.buffptr;
     
-    while (((newline_ptr = memchr(line_start, '\n',
-                                 dev->partial_entry.buffptr + dev->partial_entry.size - line_start)))s != NULL) {
+    while ((newline_ptr = memchr(line_start, '\n',
+                                 (const char *)dev->partial_entry.buffptr
+                                 + dev->partial_entry.size
+                                 - line_start)) != NULL) {
 
-        size_t line_len = newline_ptr - line_start + 1; /* include \n */
+        line_len      = (size_t)(newline_ptr - line_start) + 1;/* include \n */
 
         /* Create a temporary entry */
-        struct aesd_buffer_entry entry = {
-            .buffptr = kmalloc(line_len, GFP_KERNEL),
-            .size = line_len
-        };
+        entry.buffptr = kmalloc(line_len, GFP_KERNEL);
+        entry.size = line_len;
         if (!entry.buffptr) {
             retval = -ENOMEM;
             goto out;
@@ -167,7 +170,7 @@ ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count, loff
 
         /* If the buffer is full, free the entry that will be overwritten */
         if (dev->circular_buffer.full) {
-            const char *old = dev->circular_buffer.entry[dev->circular_buffer.out_offs].buffptr;
+            old = dev->circular_buffer.entry[dev->circular_buffer.out_offs].buffptr;
             if (old)
                 kfree(old);
         }
@@ -181,7 +184,7 @@ ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count, loff
     /* Any leftover bytes after the last newline stay in partial_entry */
     leftover = dev->partial_entry.buffptr + dev->partial_entry.size - line_start;
     if (leftover > 0) {
-        memmove(dev->partial_entry.buffptr, line_start, leftover);
+        memmove((char *)dev->partial_entry.buffptr, line_start, leftover);
     }
     dev->partial_entry.size = leftover;
 
@@ -190,16 +193,21 @@ out:
     return retval;
 }
 
+
 /* 
 Function name : aesd_llseek 
 Description :used reposition the file offset
 	     Supports SEEK_SET, SEEK_CUR, and SEEK_END and updates the file position accordingly
 */
 
-loff_t aesd_llseek(struct file *flip, loff_t offset, int whence_
+loff_t aesd_llseek(struct file *filp, loff_t offset, int whence)
 {
-	struct aesd_dev *dev = filp->private_data;
-	loff_t new_pos;
+	//struct aesd_dev *dev = filp->private_data;
+	//loff_t new_pos;
+	//loff_t total_size;
+	struct aesd_dev *dev;
+        loff_t total_size;
+        dev = filp->private_data;
 	
 	if(!dev)
 	{
@@ -211,7 +219,7 @@ loff_t aesd_llseek(struct file *flip, loff_t offset, int whence_
 		return -ERESTARTSYS;
 	}
 	
-	loff_t total_size = (loff_t)aesd_circular_buffer_total_size(&dev->circular_buffer);
+	total_size = (loff_t)aesd_circular_buffer_total_size(&dev->circular_buffer);
 	
 	
  /*   switch (whence) {
