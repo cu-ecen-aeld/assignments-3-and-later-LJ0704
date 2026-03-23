@@ -11,6 +11,11 @@
  *
  */
 
+
+/*Claud AI : 
+	https://claude.ai/share/5687170f-194d-4706-b7a1-f056cfaf5264
+*/
+
 #include <linux/module.h>
 #include <linux/init.h>
 #include <linux/slab.h>
@@ -90,7 +95,7 @@ ssize_t aesd_read(struct file *filp, char __user *buf, size_t count, loff_t *f_p
     entry = aesd_circular_buffer_find_entry_offset_for_fpos(&dev->circular_buffer,
                                                            *f_pos, &entry_offset);
     if (!entry) {
-        retval = 0; /* EOF */
+        retval = 0; 
         goto out;
     }
 
@@ -202,9 +207,6 @@ Description :used reposition the file offset
 
 loff_t aesd_llseek(struct file *filp, loff_t offset, int whence)
 {
-	//struct aesd_dev *dev = filp->private_data;
-	//loff_t new_pos;
-	//loff_t total_size;
 	struct aesd_dev *dev;
         loff_t total_size;
         dev = filp->private_data;
@@ -220,36 +222,12 @@ loff_t aesd_llseek(struct file *filp, loff_t offset, int whence)
 	}
 	
 	total_size = (loff_t)aesd_circular_buffer_total_size(&dev->circular_buffer);
-	
-	
- /*   switch (whence) {
-    case SEEK_SET:
-        new_pos = offset;
-        break;
-    case SEEK_CUR:
-        new_pos = filp->f_pos + offset;
-        break;
-    case SEEK_END:
-        new_pos = total_size + offset;
-        break;
-    default:
-        mutex_unlock(&dev->lock);
-        return -EINVAL;
-    }
 
-    if (new_pos < 0 || new_pos > total_size) {
-        mutex_unlock(&dev->lock);
-        return -EINVAL;
-    }
-
-    filp->f_pos = new_pos;
-    mutex_unlock(&dev->lock);
-    return new_pos;*/
         mutex_unlock(&dev->lock);
 
     /*
      * fixed_size_llseek() handles SEEK_SET / SEEK_CUR / SEEK_END,
-     * bounds-checks the result (0 … size), and updates filp->f_pos
+     * bounds-checks the result (0 till size), and updates filp->f_pos
      * under the inode lock — preventing races between concurrent
      * llseek and read calls on the same file descriptor.
      */
