@@ -78,6 +78,84 @@ struct aesd_buffer_entry *aesd_circular_buffer_find_entry_offset_for_fpos(struct
 }
 
 /**
+ * @param buffer the buffer to compute the total size of
+ * @return total number of bytes stored across all valid entries in the buffer
+ */
+size_t aesd_circular_buffer_total_size(struct aesd_circular_buffer *buffer)
+{
+    size_t total = 0;
+    uint8_t count;
+    uint8_t index;
+    uint8_t i;
+
+    if (buffer == NULL)
+        return 0;
+
+    if (buffer->full) {
+        count = AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED;
+        index = buffer->out_offs;
+    } else {
+        count = buffer->in_offs;
+        index = 0;
+    }
+
+    for (i = 0; i < count; i++) {
+        total += buffer->entry[index].size;
+        index = (index + 1) % AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED;
+    }
+
+    return total;
+}
+
+/**
+ * @param buffer  the circular buffer to seek within. Caller must hold any locks.
+ * @param write_cmd  zero-referenced command index relative to the oldest stored entry
+ * @param write_cmd_offset  zero-referenced byte offset within that command
+ * @return the absolute file position (byte offset from start of all concatenated data)
+ *         that corresponds to write_cmd/write_cmd_offset, or -1 if the parameters are
+ *         out of range.
+ */
+ssize_t aesd_circular_buffer_fpos_from_cmd(struct aesd_circular_buffer *buffer,
+                                           uint32_t write_cmd,
+                                           uint32_t write_cmd_offset)
+{
+    uint8_t count;
+    uint8_t index;
+    uint8_t i;
+    ssize_t  fpos = 0;
+
+    if (buffer == NULL)
+        return -1;
+
+    /* How many entries are currently stored? */
+    if (buffer->full) {
+        count = AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED;
+        index = buffer->out_offs;   /* oldest entry */
+    } else {
+        count = buffer->in_offs;
+        index = 0;
+    }
+
+    /* write_cmd must refer to a stored entry */
+    if (write_cmd >= count)
+        return -1;
+
+    /* Sum the sizes of all entries that come before write_cmd */
+    for (i = 0; i < write_cmd; i++) {
+        fpos += (ssize_t)buffer->entry[index].size;
+        index = (index + 1) % AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED;
+    }
+
+    /* Now `index` points to the target entry; validate the byte offset */
+    if (write_cmd_offset >= buffer->entry[index].size)
+        return -1;
+
+    fpos += (ssize_t)write_cmd_offset;
+    return fpos;
+}
+
+
+/**
 * Adds entry @param add_entry to @param buffer in the location specified in buffer->in_offs.
 * If the buffer was already full, overwrites the oldest entry and advances buffer->out_offs to the
 * new start location.
